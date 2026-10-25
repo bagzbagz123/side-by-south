@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   calculateTrackerMetrics, Inquiry, InquiryStage, inquiryMoney, localDate, money,
   PaymentMethod, sourceLabel, SpendEntry, STAGE_LABELS, TrackerData, TrackerSettings,
-  Transaction, TRANSACTION_LABELS, TransactionType, WEBSITE_PHOTO_AD_ID, WEBSITE_VIDEO_AD_ID,
+  Transaction, TRANSACTION_LABELS, TransactionType, WEBSITE_PACKAGE_AD_ID, WEBSITE_PHOTO_AD_ID, WEBSITE_VIDEO_AD_ID,
 } from "@/lib/tracker-metrics";
 import { CloudTrackingStatus, cloudStatusSummary, easternTimestamp } from "./cloud-status";
 
@@ -147,7 +147,7 @@ function CloudStatusPanel({ status }: { status?: CloudTrackingStatus }) {
 
 function SourceFields({ settings, initialSource = "unknown", initialAd = "", captured = false }: { settings: TrackerSettings; initialSource?: string; initialAd?: string; captured?: boolean }) {
   if (captured) return <p className="tracker-note">Original URL attribution is retained. Ad reference: {initialAd || "Campaign-level URL"}.</p>;
-  return <><label>How did they find us?<select name="source" defaultValue={initialSource}><option value="unknown">Unknown / not asked</option><option value="client_reported">Client said this Meta campaign</option></select></label><label>Which ad, if known?<select name="sourceAdId" defaultValue={initialAd}><option value="">Campaign only / unsure</option><option value={settings.videoAdId || WEBSITE_VIDEO_AD_ID}>15-second proposal video</option><option value={settings.photoAdId || WEBSITE_PHOTO_AD_ID}>Proposal photo</option></select></label></>;
+  return <><label>How did they find us?<select name="source" defaultValue={initialSource}><option value="unknown">Unknown / not asked</option><option value="client_reported">Client said this Meta campaign</option></select></label><label>Which ad, if known?<select name="sourceAdId" defaultValue={initialAd}><option value="">Campaign only / unsure</option><option value={settings.videoAdId || WEBSITE_VIDEO_AD_ID}>15-second proposal video</option><option value={settings.photoAdId || WEBSITE_PHOTO_AD_ID}>Proposal photo</option><option value={settings.packageAdId || WEBSITE_PACKAGE_AD_ID}>$1,250 photo + film + setup</option></select></label></>;
 }
 
 function ManualInquiryForm({ busy, settings, save, onError }: { busy: boolean; settings: TrackerSettings; save: Save; onError: (s: string) => void }) {

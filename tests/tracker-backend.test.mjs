@@ -86,6 +86,46 @@ test("public form rejects wrong origins, missing consent, invalid dates, oversiz
   assert.equal(sql.prepare("SELECT COUNT(*) AS count FROM inquiries").get().count, 0);
 });
 
+const packageAttribution = {
+  utm_source: "instagram", utm_medium: "paid_social", utm_campaign: "sbs_proposals_20261026",
+  utm_content: "package_1250_static", campaign_id: "120255494608980357",
+  adset_id: "120255494608970357", ad_id: "120255499730570357",
+};
+
+test("package ad captures the original seven URL fields without changing financial or campaign settings", () => {
+  const validated = store.validateInquiry(inquiry({ attribution: packageAttribution }));
+  assert.equal(store.PACKAGE_AD_ID, packageAttribution.ad_id);
+  assert.equal(validated.source, "captured_url");
+  assert.equal(validated.sourceAdId, packageAttribution.ad_id);
+  for (const [key, value] of Object.entries(packageAttribution)) assert.equal(validated.attribution[key], value);
+  assert.equal("quotedMediaCents" in validated, false);
+  assert.equal(store.BASE_SETTINGS.packageAdId, packageAttribution.ad_id);
+  assert.equal(store.BASE_SETTINGS.budgetCents, 35000);
+});
+
+test("manual package attribution accepts only a known ad and retains client-reported confidence", () => {
+  const validated = store.validateInquiry(inquiry({ source: "client_reported", sourceAdId: packageAttribution.ad_id, attribution: {} }), true);
+  assert.equal(validated.source, "client_reported");
+  assert.equal(validated.sourceAdId, packageAttribution.ad_id);
+  assert.equal(validated.attribution.campaign_id, store.CAMPAIGN_ID);
+  assert.equal(validated.attribution.ad_id, packageAttribution.ad_id);
+  assert.throws(() => store.validateInquiry(inquiry({ source: "client_reported", sourceAdId: "unrelated-ad", attribution: {} }), true), /Choose one of this campaign's ads/);
+});
+
+test("package URL attribution fails closed for unrelated ad or campaign IDs and forged public confidence", () => {
+  for (const attribution of [
+    { ...packageAttribution, ad_id: "unrelated-ad" },
+    { ...packageAttribution, campaign_id: "unrelated-campaign" },
+  ]) {
+    const validated = store.validateInquiry(inquiry({ attribution }));
+    assert.equal(validated.source, "unknown");
+    assert.equal(validated.sourceAdId, null);
+    assert.equal(validated.attribution.ad_id, attribution.ad_id, "preserve raw evidence without assigning campaign confidence");
+  }
+  assert.throws(() => store.validateInquiry(inquiry({ attribution: packageAttribution, source: "captured_url" })), /public inquiry fields only/);
+  for (const ad_id of [store.VIDEO_AD_ID, store.PHOTO_AD_ID]) assert.equal(store.validateInquiry(inquiry({ attribution: { ...packageAttribution, ad_id } })).source, "captured_url");
+});
+
 test("duplicate submission is idempotent and returns only reference and ID", async () => {
   const value = inquiry();
   const first = await inquiryApi.POST(makeRequest("/api/inquiries", value));
