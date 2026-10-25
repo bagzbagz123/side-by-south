@@ -54,6 +54,7 @@ export interface TrackerSettings {
   adSetId?: string;
   videoAdId?: string;
   photoAdId?: string;
+  packageAdId?: string;
   budgetCents: number;
   start: string;
   end: string;
@@ -72,6 +73,7 @@ export interface TrackerData {
 
 export const WEBSITE_VIDEO_AD_ID = "120255494608960357";
 export const WEBSITE_PHOTO_AD_ID = "120255494734630357";
+export const WEBSITE_PACKAGE_AD_ID = "120255499730570357";
 export const STAGE_LABELS: Record<InquiryStage, string> = {
   new: "New inquiry", qualified: "Qualified", quoted: "Quote sent", booked: "Booked", completed: "Completed", lost: "Lost", cancelled: "Cancelled",
 };
@@ -108,12 +110,12 @@ export function campaignAttribution(inquiry: Inquiry, settings: TrackerSettings)
   if (inquiry.isTest || inquiry.source === "unknown") return false;
   if (inquiry.attribution?.campaign_id === settings.campaignId) return true;
   const ad = inquiry.sourceAdId || inquiry.attribution?.ad_id;
-  return inquiry.source === "client_reported" && [settings.videoAdId || WEBSITE_VIDEO_AD_ID, settings.photoAdId || WEBSITE_PHOTO_AD_ID].includes(ad || "");
+  return inquiry.source === "client_reported" && [settings.videoAdId || WEBSITE_VIDEO_AD_ID, settings.photoAdId || WEBSITE_PHOTO_AD_ID, settings.packageAdId || WEBSITE_PACKAGE_AD_ID].includes(ad || "");
 }
 
 export function sourceLabel(inquiry: Inquiry, settings: TrackerSettings): string {
   const ad = inquiry.sourceAdId || inquiry.attribution?.ad_id;
-  const name = ad === (settings.videoAdId || WEBSITE_VIDEO_AD_ID) ? "Video ad" : ad === (settings.photoAdId || WEBSITE_PHOTO_AD_ID) ? "Photo ad" : "Campaign";
+  const name = ad === (settings.videoAdId || WEBSITE_VIDEO_AD_ID) ? "Video ad" : ad === (settings.photoAdId || WEBSITE_PHOTO_AD_ID) ? "Photo ad" : ad === (settings.packageAdId || WEBSITE_PACKAGE_AD_ID) ? "$1,250 package ad" : "Campaign";
   const sourceMatchesCampaign = campaignAttribution({ ...inquiry, isTest: false }, settings);
   if (inquiry.source === "captured_url" && sourceMatchesCampaign) return `${name} · URL captured`;
   if (inquiry.source === "client_reported" && sourceMatchesCampaign) return `${name} · client reported`;

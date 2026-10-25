@@ -126,16 +126,6 @@ dialogs.forEach(dialog=>{
     if(state.opener?.isConnected)state.opener.focus({preventScroll:true});
   });
 });
-const packages={both:{name:'photo + film',price:600,message:'photo + film coverage ($600)'},photo:{name:'photography',price:350,message:'photography coverage ($350)'},film:{name:'film',price:400,message:'film coverage ($400)'}};
-let selectedPackage='both';
-document.querySelectorAll('input[name="coverage"]').forEach(input=>input.addEventListener('change',()=>{
-  selectedPackage=input.value;const choice=packages[selectedPackage];document.querySelector('#selection-summary').textContent='Your choice: '+choice.name+', $'+choice.price+'.';document.querySelector('#coverage-cta').setAttribute('aria-label','Check availability for '+choice.name+' for $'+choice.price);document.querySelector('#copy-status').textContent='';document.dispatchEvent(new CustomEvent('sbs:coveragechange',{detail:{coverage:selectedPackage}}));
-}));
-document.querySelector('#copy-inquiry').addEventListener('click',async()=>{
-  const adReference=window.SBSAttribution?.ad_id;const sourceSuffix=adReference?' Ad reference: '+adReference+'.':'';
-  const message='Hi Side by South! I’m interested in '+packages[selectedPackage].message+' for a Miami-area proposal. My date or date window is [date], and the location is [location]. Could we discuss availability?'+sourceSuffix;
-  try{await navigator.clipboard.writeText(message);document.querySelector('#copy-status').textContent='Copied. Paste into Instagram and add your date and location.';}catch{document.querySelector('#copy-status').textContent=message;}
-});
 if(matchMedia('(hover: none) and (pointer: coarse)').matches){document.querySelectorAll('[data-instagram]').forEach(link=>{link.href='https://ig.me/m/sidebysouth';});}
 const intro=document.querySelector('.hero-intro>p');
 const introAnimation=intro?animateSurface(intro,[{opacity:.85},{opacity:1}],{duration:240}):null;

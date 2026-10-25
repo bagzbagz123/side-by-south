@@ -68,6 +68,28 @@ test("inquiries use Eastern creation dates, separate source attribution, and exc
   assert.equal(result.campaignToDate.inquiries.otherOrUnknown, 1);
 });
 
+test("package ad URL and client-reported paid bookings reach daily campaign summaries", () => {
+  const packageAdId = "120255499730570357";
+  const inquiries = [
+    inquiry({ stage: "booked", completedDate: null, sourceAdId: packageAdId, attribution: { campaign_id: settings.campaignId, ad_id: packageAdId, utm_content: "package_1250_static" } }),
+    inquiry({ id: "reported-package", stage: "booked", completedDate: null, source: "client_reported", sourceAdId: packageAdId, attribution: {} }),
+    inquiry({ id: "other", stage: "booked", completedDate: null, source: "unknown", attribution: { campaign_id: "unrelated-campaign", ad_id: packageAdId } }),
+    inquiry({ id: "package-test", isTest: true, sourceAdId: packageAdId, attribution: { campaign_id: settings.campaignId, ad_id: packageAdId } }),
+  ];
+  const transactions = [
+    transaction("package-deposit", "media_deposit", 15000, "2026-10-26"),
+    transaction("reported-deposit", "media_deposit", 15000, "2026-10-26", { inquiryId: "reported-package" }),
+    transaction("other-deposit", "media_deposit", 10000, "2026-10-26", { inquiryId: "other" }),
+    transaction("test-deposit", "media_deposit", 99999, "2026-10-26", { inquiryId: "package-test" }),
+  ];
+  const result = summary(data({ inquiries, transactions }), new Date("2026-10-27T13:00:00Z"));
+  assert.equal(result.daily.inquiries.campaign, 2);
+  assert.equal(result.daily.newPaidBookings.campaign, 2);
+  assert.equal(result.daily.newPaidBookings.otherOrUnknown, 1);
+  assert.equal(result.daily.campaignCash.netMediaCents, 30000);
+  assert.equal(result.campaignToDate.currentPaidBookings.campaign, 2);
+});
+
 test("confirmed prior-day spend is independent of current-day gaps and stale observations remain provisional", () => {
   const now = new Date("2026-10-28T13:00:00Z");
   const fresh = summary(data({ spend: [spend("2026-10-26", 200, now.toISOString()), spend("2026-10-27", 300, now.toISOString())] }), now);

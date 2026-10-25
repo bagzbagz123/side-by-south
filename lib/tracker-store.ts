@@ -4,11 +4,13 @@ import { getCloudTrackingStatus } from "@/lib/cloud-tracking";
 export const CAMPAIGN_ID = "120255494608980357";
 export const VIDEO_AD_ID = "120255494608960357";
 export const PHOTO_AD_ID = "120255494734630357";
+export const PACKAGE_AD_ID = "120255499730570357";
 export const BASE_SETTINGS = {
   campaignId: CAMPAIGN_ID,
   adSetId: "120255494608970357",
   videoAdId: VIDEO_AD_ID,
   photoAdId: PHOTO_AD_ID,
+  packageAdId: PACKAGE_AD_ID,
   budgetCents: 35000,
   start: "2026-10-25T08:10:00-04:00",
   end: "2026-11-01T07:10:00-05:00",
@@ -23,7 +25,7 @@ const SOURCES = ["captured_url", "client_reported", "unknown"];
 const TYPES = ["media_deposit", "media_balance", "media_refund", "direct_expense", "decoration_receipt", "partner_payout", "software_expense"];
 const METHODS = ["zelle", "venmo", "cash", "bank_transfer", "other"];
 const ATTRIBUTION_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "campaign_id", "adset_id", "ad_id"];
-const KNOWN_ADS = new Set([VIDEO_AD_ID, PHOTO_AD_ID]);
+const KNOWN_ADS = new Set([VIDEO_AD_ID, PHOTO_AD_ID, PACKAGE_AD_ID]);
 type JsonObject = Record<string, unknown>;
 type Row = Record<string, string | number | null>;
 
@@ -90,7 +92,7 @@ function attribution(value: unknown): Record<string, string> {
 function adId(value: unknown): string | null {
   if (value == null || value === "") return null;
   const result = text(value, "Ad ID", 40, true);
-  if (!KNOWN_ADS.has(result)) throw new TrackerError(400, "Choose one of this campaign's two ads.");
+  if (!KNOWN_ADS.has(result)) throw new TrackerError(400, "Choose one of this campaign's ads.");
   return result;
 }
 function capturedSource(attrs: Record<string, string>): boolean {
