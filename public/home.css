@@ -264,7 +264,7 @@ button svg {
   overflow:hidden;
   background:var(--surface)
 }
-.moving-frame img {
+.moving-frame video {
   height:100%;
   object-fit:cover;
   object-position:50% 50%

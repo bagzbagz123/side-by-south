@@ -4,9 +4,29 @@ const photoDialog=document.querySelector('#photo-dialog');
 const film=document.querySelector('#proposal-video');
 const dialogs=[filmDialog,photoDialog];
 const dialogOpeners=new Map();
+const preview=document.querySelector('#ambient-video');
+const previewToggle=document.querySelector('#preview-toggle');
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+let previewPaused=reducedMotion.matches;
+let previewInView=false;
+preview.muted=true;
+function updatePreview(){
+  const canPlay=previewInView&&!previewPaused&&!document.hidden&&!dialogs.some(dialog=>dialog.open);
+  if(canPlay)preview.play().catch(()=>{});else preview.pause();
+  previewToggle.textContent=previewPaused?'Play preview':'Pause preview';
+  previewToggle.setAttribute('aria-pressed',String(previewPaused));
+}
+if('IntersectionObserver' in window){
+  new IntersectionObserver(entries=>{previewInView=entries[0].isIntersecting;updatePreview();},{threshold:.12}).observe(preview);
+}
+previewToggle.addEventListener('click',()=>{previewPaused=!previewPaused;updatePreview();});
+document.addEventListener('visibilitychange',updatePreview);
+reducedMotion.addEventListener('change',event=>{previewPaused=event.matches;updatePreview();});
+updatePreview();
 function openDialog(dialog,opener){
   dialogOpeners.set(dialog,opener);
   if(!dialog.open)dialog.showModal();
+  updatePreview();
 }
 function closeDialog(dialog){
   if(dialog===filmDialog)film.pause();
@@ -25,6 +45,7 @@ dialogs.forEach(dialog=>{
   dialog.addEventListener('close',()=>{
     if(dialog.open)return;
     if(dialog===filmDialog)film.pause();
+    updatePreview();
     const opener=dialogOpeners.get(dialog);
     if(opener?.isConnected)opener.focus({preventScroll:true});
   });
