@@ -7,7 +7,6 @@
   --margin:clamp(18px,2.2vw,34px);
   --gap:clamp(12px,1.5vw,24px);
   --section-space:clamp(82px,10vw,152px);
-  --motion-ease:cubic-bezier(.22,1,.36,1);
   font-family:"Avenir Next",Avenir,"Helvetica Neue",Arial,sans-serif;
   color:var(--ink);
   background:var(--paper);
@@ -25,7 +24,7 @@
   box-sizing:border-box
 }
 html {
-  scroll-behavior:smooth;
+  scroll-behavior:auto;
   scroll-padding-top:24px
 }
 body {
@@ -132,14 +131,10 @@ button svg {
   font-size:16px;
   font-weight:500;
   border:0;
-  white-space:nowrap;
-  transition:background .2s,transform .18s var(--motion-ease)
+  white-space:nowrap
 }
 .button:hover {
   background:var(--muted)
-}
-.button:active {
-  transform:scale(.985)
 }
 .button-light {
   background:var(--paper);
@@ -249,8 +244,7 @@ button svg {
 .photo-button img {
   width:100%;
   height:100%;
-  object-fit:cover;
-  transition:transform .22s var(--motion-ease)
+  object-fit:cover
 }
 .hero-still .photo-button,.moving-frame {
   height:clamp(500px,59vw,850px)
@@ -270,7 +264,7 @@ button svg {
   overflow:hidden;
   background:var(--surface)
 }
-.moving-frame video {
+.moving-frame img {
   height:100%;
   object-fit:cover;
   object-position:50% 50%
@@ -376,8 +370,7 @@ button svg {
   gap:18px;
   background:var(--surface);
   padding:27px 24px;
-  cursor:pointer;
-  transition:background .25s,color .25s
+  cursor:pointer
 }
 .package-row:has(input:checked) {
   background:var(--ink);
@@ -501,8 +494,7 @@ button svg {
 }
 .partner-image img {
   height:100%;
-  object-fit:contain;
-  transition:transform .22s var(--motion-ease)
+  object-fit:contain
 }
 .partner-large .partner-image {
   height:clamp(530px,62vw,900px)
@@ -608,26 +600,14 @@ button svg {
   overflow:hidden
 }
 .brand-marquee>div {
-  display:flex;
-  gap:70px;
-  width:max-content;
-  animation:brand-pass 35s linear infinite
+  text-align:center
 }
 .brand-marquee span {
   font-family:Georgia,"Times New Roman",serif;
-  font-size:17vw;
+  font-size:16vw;
   letter-spacing:-.065em;
   line-height:1.1;
   white-space:nowrap
-}
-.brand-marquee:hover>div,body.motion-paused .brand-marquee>div {
-  animation-play-state:paused
-}
-@keyframes brand-pass {
-  to {
-  transform:translateX(calc(-50% - 35px))
-}
-
 }
 .footer-details {
   display:flex;
@@ -1031,7 +1011,7 @@ h2 {
   padding-bottom:35px
 }
 .brand-marquee span {
-  font-size:23vw
+  font-size:16vw
 }
 .footer-details {
   display:block;
@@ -1060,27 +1040,6 @@ dialog {
   .selection-summary { flex-direction:column; align-items:stretch; gap:12px; }
   .selection-summary p { max-width:none; }
 }
-
-@media(prefers-reduced-motion:reduce) {
-  html {
-  scroll-behavior:auto
-}
-*,*:before,*:after {
-  animation:none!important;
-  transition:none!important
-}
-.photo-button:hover img,.partner-image:hover img {
-  transform:none
-}
-.brand-marquee>div {
-  transform:none
-}
-.brand-marquee span+span {
-  display:none
-}
-
-}
-
 
 /* A wide question list breaks the rhythm of the paired sections. */
 .questions { display:block; }
@@ -1111,30 +1070,10 @@ dialog {
  .brothers-copy .side-facts { margin-bottom:0; }
 }
 
-.button>span[aria-hidden],.text-button>span[aria-hidden] { display:inline-block; transition:transform .18s var(--motion-ease); }
-.play-film { transition:background .2s,transform .18s var(--motion-ease); }
-.play-film svg { transition:transform .18s var(--motion-ease); }
-.play-film:active { transform:scale(.985); }
-dialog[data-motion="opening"]::backdrop { animation:dialog-backdrop-in .24s var(--motion-ease) both; }
-dialog[data-motion="closing"]::backdrop { animation:dialog-backdrop-out .16s ease-out both; }
-@keyframes dialog-backdrop-in { from { opacity:0; } to { opacity:1; } }
-@keyframes dialog-backdrop-out { from { opacity:1; } to { opacity:0; } }
-@keyframes answer-in { from { opacity:.6; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
-@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference) {
-  .photo-button:hover img,.partner-image:hover img { transform:scale(1.02); }
-  .button:hover>span[aria-hidden],.text-button:hover>span[aria-hidden] { transform:translate(3px,-3px); }
-  .play-film:hover svg { transform:scale(1.08); }
-}
+.button>span[aria-hidden],.text-button>span[aria-hidden] { display:inline-block; }
 @media (hover:hover) and (pointer:fine) {
   .package-row:not(:has(input:checked)):hover { background:#dce2d9; }
 }
-@media (prefers-reduced-motion:no-preference) {
-  body:not(.motion-paused) .question-list details[open] p { animation:answer-in .22s var(--motion-ease); }
-}
-body.motion-paused .photo-button img,body.motion-paused .partner-image img,body.motion-paused .button>span,body.motion-paused .text-button>span,body.motion-paused .play-film svg { transform:none; transition:none; }
-body.motion-paused .button:active,body.motion-paused .play-film:active { transform:none; }
-body.motion-paused dialog::backdrop { animation:none; }
-html:has(body.motion-paused) { scroll-behavior:auto; }
 
 svg.icon-arrow-up-right {
   display:inline-block;
@@ -1206,8 +1145,7 @@ svg.icon-arrow-up-right {
   height:100%;
   border:1px solid var(--ink);
   padding:13px 24px;
-  font-size:15px;
-  transition:background .18s,color .18s
+  font-size:15px
 }
 .coverage-builder .mode-picker input:checked+span {
   background:var(--ink);
@@ -1329,8 +1267,7 @@ svg.icon-arrow-up-right {
   min-inline-size:0;
   padding:26px 23px;
   background:var(--surface);
-  cursor:pointer;
-  transition:background .18s,color .18s
+  cursor:pointer
 }
 .coverage-builder .coverage-row:has(input:checked) {
   background:var(--ink);
