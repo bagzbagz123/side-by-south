@@ -1,0 +1,1 @@
+ALTER TABLE `inquiry_alerts` ADD `is_test_alert` integer DEFAULT false NOT NULL;
