@@ -600,7 +600,16 @@ button svg {
   overflow:hidden
 }
 .brand-marquee>div {
-  text-align:center
+  display:flex;
+  gap:70px;
+  width:max-content;
+  animation:brand-pass 35s linear infinite;
+  animation-play-state:paused
+}
+.brand-marquee.is-playing>div { animation-play-state:running; }
+.brand-marquee:hover>div { animation-play-state:paused; }
+@keyframes brand-pass {
+  to { transform:translateX(calc(-50% - 35px)); }
 }
 .brand-marquee span {
   font-family:Georgia,"Times New Roman",serif;
@@ -608,6 +617,15 @@ button svg {
   letter-spacing:-.065em;
   line-height:1.1;
   white-space:nowrap
+}
+.footer-motion-controls {
+  display:flex;
+  justify-content:flex-end;
+  padding-bottom:24px
+}
+@media(prefers-reduced-motion:reduce) {
+  .brand-marquee>div { animation:none; display:block; width:auto; text-align:center; }
+  .brand-marquee span+span { display:none; }
 }
 .footer-details {
   display:flex;

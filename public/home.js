@@ -7,8 +7,12 @@ const dialogOpeners=new Map();
 const preview=document.querySelector('#ambient-video');
 const previewToggle=document.querySelector('#preview-toggle');
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+const footerLogo=document.querySelector('#footer-wordmark');
+const footerToggle=document.querySelector('#footer-logo-toggle');
 let previewPaused=reducedMotion.matches;
 let previewInView=false;
+let footerPaused=false;
+let footerInView=false;
 preview.muted=true;
 function updatePreview(){
   const canPlay=previewInView&&!previewPaused&&!document.hidden&&!dialogs.some(dialog=>dialog.open);
@@ -16,17 +20,27 @@ function updatePreview(){
   previewToggle.textContent=previewPaused?'Play preview':'Pause preview';
   previewToggle.setAttribute('aria-pressed',String(previewPaused));
 }
+function updateFooterLogo(){
+  const canPlay=footerInView&&!footerPaused&&!reducedMotion.matches&&!document.hidden&&!dialogs.some(dialog=>dialog.open);
+  footerLogo.classList.toggle('is-playing',canPlay);
+  footerToggle.hidden=reducedMotion.matches;
+  footerToggle.textContent=footerPaused?'Play logo':'Pause logo';
+  footerToggle.setAttribute('aria-pressed',String(footerPaused));
+}
+function updateMedia(){updatePreview();updateFooterLogo();}
 if('IntersectionObserver' in window){
   new IntersectionObserver(entries=>{previewInView=entries[0].isIntersecting;updatePreview();},{threshold:.12}).observe(preview);
+  new IntersectionObserver(entries=>{footerInView=entries[0].isIntersecting;updateFooterLogo();},{threshold:.01}).observe(footerLogo);
 }
 previewToggle.addEventListener('click',()=>{previewPaused=!previewPaused;updatePreview();});
-document.addEventListener('visibilitychange',updatePreview);
-reducedMotion.addEventListener('change',event=>{previewPaused=event.matches;updatePreview();});
-updatePreview();
+footerToggle.addEventListener('click',()=>{footerPaused=!footerPaused;updateFooterLogo();});
+document.addEventListener('visibilitychange',updateMedia);
+reducedMotion.addEventListener('change',event=>{previewPaused=event.matches;updateMedia();});
+updateMedia();
 function openDialog(dialog,opener){
   dialogOpeners.set(dialog,opener);
   if(!dialog.open)dialog.showModal();
-  updatePreview();
+  updateMedia();
 }
 function closeDialog(dialog){
   if(dialog===filmDialog)film.pause();
@@ -45,7 +59,7 @@ dialogs.forEach(dialog=>{
   dialog.addEventListener('close',()=>{
     if(dialog.open)return;
     if(dialog===filmDialog)film.pause();
-    updatePreview();
+    updateMedia();
     const opener=dialogOpeners.get(dialog);
     if(opener?.isConnected)opener.focus({preventScroll:true});
   });
