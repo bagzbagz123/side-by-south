@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /tracker
+Disallow: /api/
+Disallow: /mcp
+
+Sitemap: https://sidebysouth.com/sitemap.xml

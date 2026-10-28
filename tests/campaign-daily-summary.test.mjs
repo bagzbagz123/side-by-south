@@ -68,6 +68,28 @@ test("inquiries use Eastern creation dates, separate source attribution, and exc
   assert.equal(result.campaignToDate.inquiries.otherOrUnknown, 1);
 });
 
+test("package ad URL and client-reported paid bookings reach daily campaign summaries", () => {
+  const packageAdId = "120255499730570357";
+  const inquiries = [
+    inquiry({ stage: "booked", completedDate: null, sourceAdId: packageAdId, attribution: { campaign_id: settings.campaignId, ad_id: packageAdId, utm_content: "package_1250_static" } }),
+    inquiry({ id: "reported-package", stage: "booked", completedDate: null, source: "client_reported", sourceAdId: packageAdId, attribution: {} }),
+    inquiry({ id: "other", stage: "booked", completedDate: null, source: "unknown", attribution: { campaign_id: "unrelated-campaign", ad_id: packageAdId } }),
+    inquiry({ id: "package-test", isTest: true, sourceAdId: packageAdId, attribution: { campaign_id: settings.campaignId, ad_id: packageAdId } }),
+  ];
+  const transactions = [
+    transaction("package-deposit", "media_deposit", 15000, "2026-10-26"),
+    transaction("reported-deposit", "media_deposit", 15000, "2026-10-26", { inquiryId: "reported-package" }),
+    transaction("other-deposit", "media_deposit", 10000, "2026-10-26", { inquiryId: "other" }),
+    transaction("test-deposit", "media_deposit", 99999, "2026-10-26", { inquiryId: "package-test" }),
+  ];
+  const result = summary(data({ inquiries, transactions }), new Date("2026-10-27T13:00:00Z"));
+  assert.equal(result.daily.inquiries.campaign, 2);
+  assert.equal(result.daily.newPaidBookings.campaign, 2);
+  assert.equal(result.daily.newPaidBookings.otherOrUnknown, 1);
+  assert.equal(result.daily.campaignCash.netMediaCents, 30000);
+  assert.equal(result.campaignToDate.currentPaidBookings.campaign, 2);
+});
+
 test("confirmed prior-day spend is independent of current-day gaps and stale observations remain provisional", () => {
   const now = new Date("2026-10-28T13:00:00Z");
   const fresh = summary(data({ spend: [spend("2026-10-26", 200, now.toISOString()), spend("2026-10-27", 300, now.toISOString())] }), now);
@@ -147,4 +169,20 @@ test("active production money with an invalid date fails closed while excluded t
   assert.throws(() => summary(data({ inquiries: [inquiry()], transactions: [invalid] }), now), /invalid money dates/);
   assert.doesNotThrow(() => summary(data({ inquiries: [inquiry({ isTest: true })], transactions: [invalid] }), now));
   assert.doesNotThrow(() => summary(data({ inquiries: [inquiry()], transactions: [{ ...invalid, voidedAt: "2026-11-01T12:00:00Z" }] }), now));
+});
+
+test("combined daily summaries preserve both campaigns and withhold missing DM coverage", () => {
+  const dm = "120255493267260357";
+  const when = new Date("2026-10-27T13:00:00Z");
+  const combinedSettings = { ...settings, budgetCents: 10000, activeCampaignId: dm, campaignIds: [settings.campaignId, dm] };
+  const website = { ...spend("2026-10-26", 4156, when.toISOString()), campaignId: settings.campaignId };
+  const partial = summary(data({ settings: combinedSettings, spend: [website] }), when);
+  assert.equal(partial.daily.adSpend.reportedCents, 4156);
+  assert.equal(partial.daily.adSpend.coverageComplete, false);
+  assert.equal(partial.daily.adSpend.missingCampaigns[0].campaignId, dm);
+  const complete = summary(data({ settings: combinedSettings, spend: [website, { ...spend("2026-10-26", 120, when.toISOString()), campaignId: dm }] }), when);
+  assert.equal(complete.daily.adSpend.reportedCents, 4276);
+  assert.equal(complete.daily.adSpend.coverageComplete, true);
+  assert.equal(complete.campaign.budgetCents, 10000);
+  assert.equal(complete.campaign.activeCampaignId, dm);
 });

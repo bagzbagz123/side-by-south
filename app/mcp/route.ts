@@ -1,14 +1,17 @@
 import { OwnerAccessError, requireTrackerOwner } from "@/lib/owner-access";
 import { acknowledgeInquiryAlerts, CloudTrackingError, getCloudTrackingStatus, getPendingInquiryAlerts, syncCampaignSpend, verifyMetaConnection } from "@/lib/cloud-tracking";
 import { DailySummaryError, getCampaignDailySummary } from "@/lib/campaign-daily-summary";
+import { getSquareStatus, syncSquareDeposits, SquareSyncError } from "@/lib/square-sync";
 
 export const dynamic = "force-dynamic";
 const EMPTY = { type: "object", properties: {}, additionalProperties: false };
 const TOOLS = [
+  { name: "get_square_status", description: "Read safe aggregate Square connection, scan and unmatched-receipt status. No credentials or customer details. Reservation confirmations remain manual and decoration payments remain held.", inputSchema: EMPTY },
+  { name: "sync_square_deposits", description: "Read approved Square payments and completed refunds, record exact eligible digital-only deposits idempotently against explicitly enrolled quotes, and queue unmatched receipts for owner review. Never charges, refunds, sends messages or confirms reservations. Decoration and physical-product payments remain held.", inputSchema: EMPTY },
   { name: "get_tracking_status", description: "Read private Side by South cloud tracking setup, safe sync status and inquiry-alert counts. Does not return credentials or client contact details.", inputSchema: EMPTY },
-  { name: "get_campaign_daily_summary", description: "Read an owner-only aggregate report of yesterday's Eastern-time ad spend, inquiries and first-funded bookings, plus current campaign-to-date cash and safeguarded completed-job contribution. Excludes tests and client details; missing spend stays unknown. Payments are owner-recorded, not bank-verified.", inputSchema: EMPTY },
-  { name: "verify_meta_connection", description: "Verify the server-side read credential against the exact Side by South USD ad account, New York timezone and campaign using fixed Meta GET requests. May run before the campaign starts; never changes spend or ads.", inputSchema: EMPTY },
-  { name: "sync_campaign_spend", description: "Reconcile explicit daily spend for the fixed Side by South campaign using a server-side ads_read-only credential. Preserves unknown days; never changes Meta ads, budgets or schedules.", inputSchema: EMPTY },
+  { name: "get_campaign_daily_summary", description: "Read an owner-only aggregate report of yesterday's Eastern-time ad spend, inquiries and first-funded bookings, plus current campaign-to-date cash and safeguarded completed-job contribution. Excludes tests and client details; missing spend stays unknown. Payments combine owner-recorded entries and verified Square receipts; bank payouts are not reconciled.", inputSchema: EMPTY },
+  { name: "verify_meta_connection", description: "Verify the server-side read credential against the exact Side by South USD ad account, New York timezone and fixed website and Instagram DM campaigns using Meta GET requests. May run before the campaign starts; never changes spend or ads.", inputSchema: EMPTY },
+  { name: "sync_campaign_spend", description: "Reconcile explicit daily spend for the fixed Side by South website and Instagram DM campaigns using a server-side ads_read-only credential. Preserves unknown days; never changes Meta ads, budgets or schedules.", inputSchema: EMPTY },
   { name: "get_pending_inquiry_alerts", description: "Claim up to 25 unreported inquiry alerts using a durable ten-minute lease. Ordinary tests are excluded; explicit owner-requested alert tests are returned with isTest and testAlert true. Returns only references, coverage and dates, without names, handles or notes.", inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 25, default: 10 } }, additionalProperties: false } },
   { name: "acknowledge_inquiry_alerts", description: "Idempotently record that the cloud task reported the known inquiry IDs from its claim. This is report intent, not guaranteed notification delivery.", inputSchema: { type: "object", properties: { claimId: { type: "string", format: "uuid" }, inquiryIds: { type: "array", minItems: 1, maxItems: 25, uniqueItems: true, items: { type: "string", format: "uuid" } } }, required: ["claimId", "inquiryIds"], additionalProperties: false } },
 ];
@@ -51,6 +54,8 @@ export async function POST(request: Request) {
     const params = args(rpc.params, ["name", "arguments", "_meta"]);
     let result: Record<string, unknown>;
     switch (params.name) {
+      case "get_square_status": args(params.arguments, []); result = await getSquareStatus(); break;
+      case "sync_square_deposits": args(params.arguments, []); result = await syncSquareDeposits(); break;
       case "get_tracking_status": args(params.arguments, []); result = await getCloudTrackingStatus(); break;
       case "get_campaign_daily_summary": args(params.arguments, []); result = await getCampaignDailySummary(); break;
       case "verify_meta_connection": args(params.arguments, []); result = await verifyMetaConnection(); break;
@@ -65,7 +70,7 @@ export async function POST(request: Request) {
     return response({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError } });
   } catch (error) {
     if (error instanceof OwnerAccessError) return rpcError(id, -32001, error.message, error.status);
-    const safe = error instanceof CloudTrackingError || error instanceof DailySummaryError ? { code: error.code, message: error.message } : { code: "tracking_unavailable", message: "The tracking request could not be completed." };
+    const safe = error instanceof CloudTrackingError || error instanceof DailySummaryError || error instanceof SquareSyncError ? { code: error.code, message: error.message } : { code: "tracking_unavailable", message: "The tracking request could not be completed." };
     return response({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify({ status: "error", ...safe }) }], structuredContent: { status: "error", ...safe }, isError: true } });
   }
 }

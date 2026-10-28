@@ -1,4 +1,4 @@
-import { calculateTrackerMetrics, campaignAttribution, inquiryMoney, localDate, reportingDates, type Inquiry, type SpendEntry, type TrackerData, type Transaction } from "@/lib/tracker-metrics";
+import { aggregateCampaignSpend, calculateTrackerMetrics, campaignAttribution, inquiryMoney, localDate, reportingDates, type Inquiry, type SpendEntry, type TrackerData, type Transaction } from "@/lib/tracker-metrics";
 import { readTracker } from "@/lib/tracker-store";
 
 const TIMEZONE = "America/New_York";
@@ -35,7 +35,8 @@ function unique<T extends { id: string }>(rows: T[]): T[] {
     return true;
   });
 }
-function spendSummary(rows: SpendEntry[], expectedDates: string[], now: Date) {
+function spendSummary(rows: SpendEntry[], expectedDates: string[], now: Date, settings: TrackerData["settings"]) {
+  rows = aggregateCampaignSpend(rows, settings, now);
   const eligible = new Map<string, SpendEntry>();
   for (const row of rows) {
     const observed = Date.parse(row.verifiedAt);
@@ -44,14 +45,15 @@ function spendSummary(rows: SpendEntry[], expectedDates: string[], now: Date) {
     if (!prior || observed > Date.parse(prior.verifiedAt)) eligible.set(row.date, row);
   }
   const observedDates = expectedDates.filter(day => eligible.has(day));
-  const confirmedDates = observedDates.filter(day => Date.parse(eligible.get(day)!.verifiedAt) >= dayEnd(day));
+  const confirmedDates = observedDates.filter(day => eligible.get(day)!.coverageComplete !== false && Date.parse(eligible.get(day)!.verifiedAt) >= dayEnd(day));
   const provisionalDates = observedDates.filter(day => !confirmedDates.includes(day));
-  const missingDates = expectedDates.filter(day => !eligible.has(day));
+  const missingDates = expectedDates.filter(day => !eligible.has(day) || eligible.get(day)!.coverageComplete === false);
+  const missingCampaigns = expectedDates.flatMap(day => eligible.get(day)?.missingCampaignIds?.map(campaignId => ({ date: day, campaignId })) || (!eligible.has(day) ? (settings.campaignIds || [settings.campaignId]).map(campaignId => ({ date: day, campaignId })) : []));
   const lastVerifiedAt = eligible.size ? new Date(Math.max(...Array.from(eligible.values(), row => Date.parse(row.verifiedAt)))).toISOString() : null;
   return {
     applicable: expectedDates.length > 0,
     reportedCents: eligible.size ? Array.from(eligible.values()).reduce((sum, row) => sum + row.amountCents, 0) : null,
-    expectedDates, observedDates, confirmedDates, missingDates, provisionalDates,
+    expectedDates, observedDates, confirmedDates, missingDates, missingCampaigns, provisionalDates,
     coverageComplete: expectedDates.length > 0 && !missingDates.length && !provisionalDates.length,
     lastVerifiedAt,
     freshness: !expectedDates.length ? "not_applicable" : missingDates.length ? (eligible.size ? "partial" : "missing") : provisionalDates.length ? "provisional" : "reported_after_day_close",
@@ -96,7 +98,7 @@ export function buildCampaignDailySummary(data: TrackerData, now = new Date()) {
     };
   };
   const currentDates = campaignDates.filter(day => day <= today);
-  const currentSpend = spendSummary(data.spend, currentDates, now);
+  const currentSpend = spendSummary(data.spend, currentDates, now, data.settings);
   const validCurrentSpend = data.spend.filter(row => currentSpend.observedDates.includes(row.date) && Number.isSafeInteger(row.amountCents) && row.amountCents >= 0 && row.amountCents <= MONEY_LIMIT && Number.isFinite(Date.parse(row.verifiedAt)) && Date.parse(row.verifiedAt) <= now.getTime());
   const currentInquiries = inquiries.map(inquiry => inquiry.stage === "completed" && inquiry.completedDate && inquiry.completedDate > today ? { ...inquiry, stage: "booked" as const } : inquiry);
   const metrics = calculateTrackerMetrics({ ...data, inquiries: currentInquiries, transactions: productionRows, spend: validCurrentSpend }, now);
@@ -110,8 +112,8 @@ export function buildCampaignDailySummary(data: TrackerData, now = new Date()) {
   const currentPaidBookings = { campaign: paid.filter(item => campaignIds.has(item.inquiry.id)).length, otherOrUnknown: paid.filter(item => !campaignIds.has(item.inquiry.id)).length };
   return {
     status: "ok", generatedAt: now.toISOString(), timezone: TIMEZONE, currency: "USD", reportDate,
-    campaign: { id: data.settings.campaignId, start: data.settings.start, end: data.settings.end, budgetCents: data.settings.budgetCents, phase: now.getTime() < Date.parse(data.settings.start) ? "not_started" : now.getTime() >= Date.parse(data.settings.end) ? "ended" : "running" },
-    daily: { date: reportDate, ...activity(reportDate, reportDate), adSpend: spendSummary(data.spend, campaignDates.includes(reportDate) ? [reportDate] : [], now) },
+    campaign: { id: data.settings.campaignId, campaignIds: data.settings.campaignIds || [data.settings.campaignId], activeCampaignId: data.settings.activeCampaignId || data.settings.campaignId, start: data.settings.start, end: data.settings.end, budgetCents: data.settings.budgetCents, phase: now.getTime() < Date.parse(data.settings.start) ? "not_started" : now.getTime() >= Date.parse(data.settings.end) ? "ended" : "running" },
+    daily: { date: reportDate, ...activity(reportDate, reportDate), adSpend: spendSummary(data.spend, campaignDates.includes(reportDate) ? [reportDate] : [], now, data.settings) },
     campaignToDate: {
       fromDate: firstCampaignDate, throughDate: today, asOf: now.toISOString(), ...activity(firstCampaignDate, today), currentPaidBookings, adSpend: currentSpend,
       completedJobContribution: {
@@ -131,7 +133,8 @@ export function buildCampaignDailySummary(data: TrackerData, now = new Date()) {
       "New paid bookings count each currently booked/completed inquiry once on its earliest active media deposit or balance date, only while current net media receipts remain positive. A later balance is not a second booking.",
       "Current paid bookings are distinct currently booked/completed inquiries with positive net media receipts; this is separate from newly funded bookings in a date range.",
       "Test inquiries, their linked money and voided entries are excluded. Other or unknown inquiry sources are separated from campaign attribution.",
-      "Payments and costs are manually confirmed by the owner; bank accounts are not connected. Backdated entries, stage changes, refunds and corrections can revise a report.",
+      "Payments combine owner-recorded entries and verified completed Square receipts; other costs remain owner-recorded and bank payouts are not reconciled. Reservation and completion stages stay manual. Backdated entries, stage changes, refunds and corrections can revise a report.",
+      "Website and Instagram DM campaign spend share one overall budget; campaign-specific daily observations are retained. Missing rows in either campaign withhold complete totals and remaining-budget claims.",
       "Missing or future spend observations remain unknown. Observations made before a local day ended are provisional, and Meta may later restate spend.",
       "Decoration receipts are pass-through cash until partner settlement is confirmed. Deposits, cash movements and quoted booking values are not net profit.",
       "Software cash payments are shown separately from the full-campaign weekly overhead allocation, which is unavailable until business-use share is confirmed; neither is deducted twice.",

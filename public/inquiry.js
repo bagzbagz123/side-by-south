@@ -31,7 +31,13 @@
     const button=form.querySelector('[type="submit"]');
     if(button.disabled)return;
     const values=new FormData(form);
-    const payload={submissionId,name:String(values.get('name')||'').trim(),instagram:String(values.get('instagram')||'').trim(),eventDate:values.get('eventDate')||null,flexibleDate:!values.get('eventDate'),eventLocation:String(values.get('eventLocation')||'').trim(),coverage:values.get('coverage'),notes:String(values.get('notes')||'').trim(),company:String(values.get('company')||''),consent:values.get('consent')==='on',attribution};
+    let notes=String(values.get('notes')||'').trim();
+    if(document.querySelector('.coverage-builder')){
+      if(!window.SBSPackages){status.textContent='The package options did not load. Please refresh or message @sidebysouth with your date and preferred coverage.';return;}
+      try{notes=window.SBSPackages.composeNotes(notes);}
+      catch(error){status.textContent=error.message;form.elements.notes.focus();return;}
+    }
+    const payload={submissionId,name:String(values.get('name')||'').trim(),instagram:String(values.get('instagram')||'').trim(),eventDate:values.get('eventDate')||null,flexibleDate:!values.get('eventDate'),eventLocation:String(values.get('eventLocation')||'').trim(),coverage:values.get('coverage'),notes,company:String(values.get('company')||''),consent:values.get('consent')==='on',attribution};
     if(testMode)payload.isTest=true;
     if(alertTestMode)payload.alertTest=true;
     button.disabled=true;form.setAttribute('aria-busy','true');status.textContent='Sending your inquiry…';
