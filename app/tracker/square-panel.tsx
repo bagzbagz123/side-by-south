@@ -20,6 +20,8 @@ type SquareState = {
     connection: "setup_required" | "not_connected" | "connected" | "error";
     code: string; message?: string; lastAttemptAt: string | null; lastSuccessAt: string | null;
     lastStatus: string | null; coverageGap: string | boolean | null; pendingReviewCount: number;
+    webhookConfigured?: boolean; lastWebhookReceivedAt?: string | null; lastWebhookSuccessAt?: string | null;
+    lastWebhookStatus?: string | null; lastWebhookCode?: string | null; webhookAttentionCount?: number;
   };
   offers: Offer[]; enrollments: Enrollment[]; receipts: Receipt[];
   refunds?: { refundId: string; paymentId: string; status: string; code: string; message?: string; amountCents: number; occurredOn: string }[];
@@ -43,14 +45,17 @@ export default function SquarePanel({ inquiries, onRecordsChanged }: {
     const result = await response.json().catch(() => ({ error: "Square status could not be read. Refresh to try again." }));
     if (!response.ok) throw new Error((result as { error?: string }).error || "Square status could not be read.");
     const next = result as SquareState;
-    if (lastSuccess.current && next.status.lastSuccessAt && lastSuccess.current !== next.status.lastSuccessAt) {
+    const receiptRevision = `${next.status.lastSuccessAt || ""}|${next.status.lastWebhookSuccessAt || ""}`;
+    let deferLedgerRefresh = false;
+    if (lastSuccess.current !== null && (next.status.lastSuccessAt || next.status.lastWebhookSuccessAt) && lastSuccess.current !== receiptRevision) {
       if (document.activeElement?.matches("input, textarea, select")) {
+        deferLedgerRefresh = true;
         setNotice("Square has newer records. Finish your entry, then refresh the tracker to see them.");
       } else {
         await onRecordsChanged();
       }
     }
-    lastSuccess.current = next.status.lastSuccessAt;
+    if (!deferLedgerRefresh) lastSuccess.current = receiptRevision;
     setData(next);
   }, [onRecordsChanged]);
   useEffect(() => {
@@ -114,7 +119,7 @@ export default function SquarePanel({ inquiries, onRecordsChanged }: {
     {!data && error && <button type="button" className="tracker-quiet" onClick={() => { setError(""); load().catch(err => setError(err.message)); }}>Refresh Square status</button>}
     {data && <>
       <div className="square-summary">
-        <dl><div><dt>Last successful check</dt><dd>{easternTimestamp(data.status.lastSuccessAt)}</dd></div><div><dt>Last attempt</dt><dd>{easternTimestamp(data.status.lastAttemptAt)}</dd></div><div><dt>Payments needing review</dt><dd>{data.status.pendingReviewCount}</dd></div></dl>
+        <dl><div><dt>Last complete payment scan</dt><dd>{easternTimestamp(data.status.lastSuccessAt)}</dd></div><div><dt>Last attempt</dt><dd>{easternTimestamp(data.status.lastAttemptAt)}</dd></div><div><dt>Payments needing review</dt><dd>{data.status.pendingReviewCount}</dd></div></dl>
         <div className="square-actions">
           {data.status.connection !== "setup_required" && data.status.connection !== "connected" && <a className="tracker-primary tracker-link" href="/api/square/connect" target="_top">Connect Square</a>}
           <button type="button" className="tracker-quiet" disabled={busy || data.status.connection !== "connected"} onClick={() => act("sync", {})}>{busy ? "Working…" : "Check payments now"}</button>
@@ -122,6 +127,12 @@ export default function SquarePanel({ inquiries, onRecordsChanged }: {
         </div>
       </div>
       {data.status.message && <p className="tracker-note">{data.status.message}</p>}
+      <div className="square-direct-status">
+        <h3>Direct Square updates</h3>
+        <p className="tracker-note">{data.status.webhookConfigured ? "The notification signing key is configured. Square can send payment updates directly to this tracker, without an AI task or an open computer." : "Direct payment notifications are not configured yet. Use Check payments now for a verified scan while setup is completed."}</p>
+        {data.status.webhookConfigured && <p className="tracker-note">Last authenticated notification: {easternTimestamp(data.status.lastWebhookReceivedAt || null)}. Last completed notification processing: {easternTimestamp(data.status.lastWebhookSuccessAt || null)}.</p>}
+        {!!data.status.webhookAttentionCount && <p className="square-notice square-error">Some direct notifications need attention. Square retries temporary failures; use Check payments now to reconcile receipts. Existing records and booking status are retained.</p>}
+      </div>
       {data.status.connection === "setup_required" && <p className="square-notice">Square connection setup is not complete. No Square payments are being imported yet.</p>}
       {data.status.coverageGap && <p className="square-notice square-error">The last scan is incomplete. Earlier verified receipts are kept; missing payments are not assumed to be zero. Check the connection, then run another check.</p>}
       <p className="tracker-note">Only approved, standalone digital-media quotes are eligible. Decoration and physical-product orders stay on hold. Imported receipts are gross payments, not bank payouts or earned profit.</p>

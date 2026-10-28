@@ -57,7 +57,7 @@ export function createHarness(options = {}) {
     if (modules.has(path)) return modules.get(path);
     const code = ts.transpileModule(readFileSync(resolve(root,path),"utf8").replaceAll("import.meta", "__importMeta"), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
     const exports={};modules.set(path,exports);
-    const context=vm.createContext({exports, __importMeta:{env:{DEV:true}}, crypto:webcrypto, TextEncoder,TextDecoder,Uint8Array, Request,Response,URL,AbortController,setTimeout,clearTimeout,console,fetch:network,require(name){if(name==="cloudflare:workers")return {env};if(name==="@/app/chatgpt-auth")return {getChatGPTUser:async()=>user};if(name.startsWith("@/"))return load(`${name.slice(2)}.ts`);throw new Error(`Unexpected import ${name}`);}});
+    const context=vm.createContext({exports, __importMeta:{env:{DEV:true}}, crypto:webcrypto, TextEncoder,TextDecoder,Uint8Array, Request,Response,Headers,URL,AbortController,atob,btoa,setTimeout,clearTimeout,console,fetch:network,require(name){if(name==="cloudflare:workers")return {env};if(name==="@/app/chatgpt-auth")return {getChatGPTUser:async()=>user};if(name.startsWith("@/"))return load(`${name.slice(2)}.ts`);throw new Error(`Unexpected import ${name}`);}});
     new vm.Script(code,{filename:path}).runInContext(context);return exports;
   }
   const core=load("lib/square-core.ts"); const sync=load("lib/square-sync.ts");

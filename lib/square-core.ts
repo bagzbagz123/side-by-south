@@ -17,6 +17,10 @@ export const SQUARE_OFFERS = [
 export type SquareOffer = typeof SQUARE_OFFERS[number];
 export type SquareObject = Record<string, unknown>;
 export const SQUARE_MESSAGES: Record<string, string> = {
+  webhook_setup_required: "Add the Square webhook signature key before enabling direct payment notifications.",
+  webhook_processed: "A signed Square event was checked against the provider. Reservation status is unchanged.",
+  webhook_ignored: "A signed Square event was unrelated to an approved deposit and was ignored.",
+  webhook_processing: "A signed Square event is being checked. It is not proof of a paid booking.",
   setup_required: "Add the Square application's ID and secret before connecting.",
   not_connected: "Connect the approved Photograph LLC Square account.",
   connected: "Square read access is connected. Reservation confirmations remain manual.",

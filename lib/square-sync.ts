@@ -378,9 +378,13 @@ export async function syncSquareDeposits(now = new Date()) {
 export async function getSquareStatus() {
   let configured = true; let configCode: string | null = null;
   try { configuration(); } catch (error) { configured = false; configCode = error instanceof SquareSyncError ? error.code : "setup_required"; }
-  const [saved, state, counts] = await Promise.all([connection(), readState(), database().prepare("SELECT (SELECT COUNT(*) FROM square_receipts WHERE status='review') + (SELECT COUNT(*) FROM square_refunds WHERE status='review') AS pending").first<Row>()]);
+  const [saved, state, counts, webhook, webhookTotals] = await Promise.all([
+    connection(), readState(), database().prepare("SELECT (SELECT COUNT(*) FROM square_receipts WHERE status='review') + (SELECT COUNT(*) FROM square_refunds WHERE status='review') AS pending").first<Row>(),
+    database().prepare("SELECT last_attempt_at,status,code FROM square_webhook_events ORDER BY last_attempt_at DESC LIMIT 1").first<Row>(),
+    database().prepare("SELECT MAX(processed_at) AS success_at,MAX(last_attempt_at) AS authenticated_at,SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS attention FROM square_webhook_events").first<Row>(),
+  ]);
   const code = configCode || (state?.last_status === "error" ? String(state.last_code || "provider_error") : saved ? String(state?.last_code || state?.last_status || "connected") : "not_connected");
-  return { connection: !configured ? "setup_required" : !saved ? "not_connected" : state?.last_code === "reconnect_required" ? "error" : "connected", code, message: squareMessage(code), lastAttemptAt: state?.last_attempt_at || null, lastSuccessAt: state?.last_success_at || null, lastStatus: state?.last_status || "not_connected", coverageGap: !!state?.coverage_gap, pendingReviewCount: Number(counts?.pending || 0), through: state?.watermark || null, reservationConfirmations: "manual", decorationPayments: "held" };
+  return { connection: !configured ? "setup_required" : !saved ? "not_connected" : state?.last_code === "reconnect_required" ? "error" : "connected", code, message: squareMessage(code), lastAttemptAt: state?.last_attempt_at || null, lastSuccessAt: state?.last_success_at || null, lastStatus: state?.last_status || "not_connected", coverageGap: !!state?.coverage_gap, pendingReviewCount: Number(counts?.pending || 0), through: state?.watermark || null, reservationConfirmations: "manual", decorationPayments: "held", webhookConfigured: !!webhookKey(), lastAuthenticatedWebhookAt: webhookTotals?.authenticated_at || null, lastWebhookReceivedAt: webhookTotals?.authenticated_at || null, lastWebhookSuccessAt: webhookTotals?.success_at || null, lastWebhookStatus: webhook?.status || null, lastWebhookCode: webhook?.code || null, webhookAttentionCount: Number(webhookTotals?.attention || 0) };
 }
 export async function getSquareTrackerState() {
   const [status, enrollments, receipts, refunds] = await Promise.all([
@@ -429,4 +433,134 @@ export async function squareTrackerAction(raw: unknown, actorId: string, now = n
     } finally { await releaseLease(lease); }
   }
   throw new SquareSyncError(400, "invalid_input");
+}
+
+// Direct Square notifications use the subscription's signature key. They do not
+// depend on an AI schedule, a browser session, or a public owner identity header.
+export const SQUARE_WEBHOOK_URL = `${SQUARE_SITE_ORIGIN}/api/square/webhook`;
+const WEBHOOK_BODY_LIMIT = 128 * 1024;
+function webhookKey(): string | null {
+  const value = (env as unknown as { SQUARE_WEBHOOK_SIGNATURE_KEY?: string }).SQUARE_WEBHOOK_SIGNATURE_KEY?.trim();
+  return value && value.length >= 16 && value.length <= 4096 ? value : null;
+}
+class WebhookRequestError extends Error {
+  constructor(public readonly status: number, public readonly code: string) { super(code); }
+}
+const webhookReply = (status: number, code = "received") => new Response(status === 204 ? null : JSON.stringify({ status: code }), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+async function webhookBody(request: Request): Promise<Uint8Array> {
+  const length = request.headers.get("content-length");
+  if (length && /^\d+$/.test(length) && Number(length) > WEBHOOK_BODY_LIMIT) throw new WebhookRequestError(413, "body_too_large");
+  const reader = request.body?.getReader(); if (!reader) throw new WebhookRequestError(400, "invalid_event");
+  const chunks: Uint8Array[] = []; let size = 0;
+  while (true) {
+    const chunk = await reader.read(); if (chunk.done) break;
+    size += chunk.value.byteLength;
+    if (size > WEBHOOK_BODY_LIMIT) { await reader.cancel(); throw new WebhookRequestError(413, "body_too_large"); }
+    chunks.push(chunk.value);
+  }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
+}
+async function validWebhookSignature(key: string, header: string | null, bytes: Uint8Array): Promise<boolean> {
+  // Decode only the fixed-length SHA-256 signature; compare all 32 bytes. The
+  // exact notification URL and raw bytes are signed before parsing any JSON.
+  if (!header || !/^[A-Za-z0-9+/]{43}=$/.test(header)) return false;
+  let supplied: Uint8Array;
+  try { supplied = Uint8Array.from(atob(header), char => char.charCodeAt(0)); } catch { return false; }
+  if (supplied.length !== 32) return false;
+  const prefix = new TextEncoder().encode(SQUARE_WEBHOOK_URL);
+  const message = new Uint8Array(prefix.length + bytes.length); message.set(prefix); message.set(bytes, prefix.length);
+  const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const expected = new Uint8Array(await crypto.subtle.sign("HMAC", material, message));
+  let difference = 0;
+  for (let index = 0; index < 32; index++) difference |= supplied[index] ^ expected[index];
+  return difference === 0;
+}
+function webhookEvent(bytes: Uint8Array, now: Date) {
+  try {
+    const event = squareObject(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+    // Unrelated subscribed merchants/types are safely acknowledged without
+    // storing their payload or attempting to read them with this connection.
+    if (event.merchant_id !== SQUARE_MERCHANT_ID || !["payment.updated", "refund.updated"].includes(String(event.type))) return null;
+    const id = squareId(event.event_id); const createdAt = squareTimestamp(event.created_at);
+    if (Date.parse(createdAt) > now.getTime() + 5 * 60_000) throw new Error("future event");
+    const kind = event.type === "payment.updated" ? "payment" : "refund";
+    const data = squareObject(event.data); const dataId = squareId(data.id);
+    if (data.type !== kind) throw new Error("wrong data type");
+    const object = squareObject(squareObject(data.object)[kind]);
+    if (object.id !== dataId) throw new Error("event identity mismatch");
+    // Every other payload field is ignored. Only an authenticated immutable ID
+    // chooses the authoritative read; payload money/text never enters a ledger.
+    return { id, type: String(event.type), createdAt, dataId, kind };
+  } catch { throw new WebhookRequestError(400, "invalid_event"); }
+}
+
+export async function handleSquareWebhook(request: Request, now = new Date()): Promise<Response> {
+  let lease: string | null = null; let eventId: string | null = null;
+  let response = webhookReply(503, "retry_required");
+  try {
+    if (request.method !== "POST") return webhookReply(405, "method_not_allowed");
+    const url = new URL(request.url);
+    if (`${url.origin}${url.pathname}` !== SQUARE_WEBHOOK_URL || url.search) return webhookReply(400, "invalid_request");
+    const key = webhookKey(); if (!key) return webhookReply(503, "webhook_setup_required");
+    const signature = request.headers.get("x-square-hmacsha256-signature");
+    if (!signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return webhookReply(403, "invalid_signature");
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") || "")) return webhookReply(400, "invalid_request");
+    const bytes = await webhookBody(request);
+    if (!await validWebhookSignature(key, signature, bytes)) return webhookReply(403, "invalid_signature");
+    const environment = request.headers.get("square-environment");
+    if (environment && environment !== "Production") return webhookReply(204);
+    const event = webhookEvent(bytes, now); if (!event) return webhookReply(204);
+    const bodyHash = hex(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer));
+    const old = await database().prepare("SELECT body_hash,status FROM square_webhook_events WHERE event_id=?").bind(event.id).first<Row>();
+    if (old && old.body_hash !== bodyHash) return webhookReply(409, "event_identity_conflict");
+    if (old?.status === "processed") return webhookReply(200, "already_received");
+    lease = await acquireLease(now); if (!lease) return webhookReply(503, "busy");
+    // Recheck after the shared lease: another request may have committed this
+    // identity between the optimistic read and acquiring the lease.
+    const locked = await database().prepare("SELECT body_hash,status FROM square_webhook_events WHERE event_id=?").bind(event.id).first<Row>();
+    if (locked && locked.body_hash !== bodyHash) throw new WebhookRequestError(409, "event_identity_conflict");
+    if (locked?.status === "processed") return webhookReply(200, "already_received");
+    // Event metadata is durable before any provider call. A failed authoritative
+    // refetch is visible as an authenticated attempt, never a paid booking.
+    await database().prepare("INSERT INTO square_webhook_events (event_id,body_hash,event_type,data_id,event_created_at,received_at,last_attempt_at,status,code,attempts) VALUES (?,?,?,?,?,?,?,'processing','webhook_processing',1) ON CONFLICT(event_id) DO UPDATE SET status='processing',code='webhook_processing',last_attempt_at=excluded.last_attempt_at,attempts=square_webhook_events.attempts+1 WHERE square_webhook_events.body_hash=excluded.body_hash AND square_webhook_events.status<>'processed'").bind(event.id, bodyHash, event.type, event.dataId, event.createdAt, now.toISOString(), now.toISOString()).run();
+    eventId = event.id;
+    const access = await accessForSync(now);
+    const cache = new Map<string, string | null>();
+    if (event.kind === "payment") {
+      const payment = squareObject((await squareRequest(`/v2/payments/${event.dataId}`, access.accessToken)).payment);
+      if (payment.id !== event.dataId) throw new SquareSyncError(502, "response_invalid");
+      if (payment.location_id === access.locationId) await processPayment(payment, access.accessToken, access.locationId, now, cache);
+    } else {
+      const refund = squareObject((await squareRequest(`/v2/refunds/${event.dataId}`, access.accessToken)).refund);
+      if (refund.id !== event.dataId) throw new SquareSyncError(502, "response_invalid");
+      if (refund.location_id === access.locationId) {
+        const paymentId = squareId(refund.payment_id);
+        const payment = squareObject((await squareRequest(`/v2/payments/${paymentId}`, access.accessToken)).payment);
+        if (payment.id !== paymentId || payment.location_id !== access.locationId) throw new SquareSyncError(502, "response_invalid");
+        if (refund.status === "COMPLETED" && (!Array.isArray(payment.refund_ids) || !payment.refund_ids.includes(refund.id))) throw new SquareSyncError(502, "refund_mismatch");
+        await processPayment(payment, access.accessToken, access.locationId, now, cache);
+        await processRefund(refund, now);
+      }
+    }
+    await database().prepare("UPDATE square_webhook_events SET status='processed',code='webhook_processed',processed_at=? WHERE event_id=? AND body_hash=?").bind(now.toISOString(), event.id, bodyHash).run();
+    // A notification does not advance the full-scan watermark or claim that a
+    // scan is complete. Receipt/refund IDs independently prevent double money.
+    response = webhookReply(200);
+  } catch (error) {
+    if (error instanceof WebhookRequestError) response = webhookReply(error.status, error.code);
+    else {
+      const code = error instanceof SquareSyncError ? error.code : "storage_unavailable";
+      if (eventId) {
+        try { await database().prepare("UPDATE square_webhook_events SET status='error',code=? WHERE event_id=? AND status<>'processed'").bind(code, eventId).run(); } catch { /* Return non-2xx so Square retries the durable event. */ }
+      }
+      response = webhookReply(503, "retry_required");
+    }
+  } finally {
+    if (lease) {
+      try { await releaseLease(lease); } catch { response = webhookReply(503, "retry_required"); }
+    }
+  }
+  return response;
 }

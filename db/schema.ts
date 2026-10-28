@@ -177,3 +177,19 @@ export const squareSyncState = sqliteTable("square_sync_state", {
   coverageGap: integer("coverage_gap", { mode: "boolean" }).notNull().default(false),
   updatedAt: text("updated_at").notNull(),
 });
+
+// Only authenticated event identifiers and bounded outcomes are retained.
+// No webhook payload, buyer details or credential is stored.
+export const squareWebhookEvents = sqliteTable("square_webhook_events", {
+  eventId: text("event_id").primaryKey(),
+  bodyHash: text("body_hash").notNull(),
+  eventType: text("event_type").notNull(),
+  dataId: text("data_id").notNull(),
+  eventCreatedAt: text("event_created_at").notNull(),
+  receivedAt: text("received_at").notNull(),
+  lastAttemptAt: text("last_attempt_at").notNull(),
+  processedAt: text("processed_at"),
+  status: text("status").notNull().default("processing"),
+  code: text("code").notNull().default("processing"),
+  attempts: integer("attempts").notNull().default(0),
+});

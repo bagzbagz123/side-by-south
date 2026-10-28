@@ -36,6 +36,13 @@
       "when": 1793148260681,
       "tag": "0004_square_deposit_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793151230841,
+      "tag": "0005_unique_vanisher",
+      "breakpoints": true
     }
   ]
 }
