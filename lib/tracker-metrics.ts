@@ -2,7 +2,7 @@ export type InquiryStage = "new" | "qualified" | "quoted" | "booked" | "complete
 export type Coverage = "photo" | "film" | "both" | "unsure";
 export type SourceConfidence = "captured_url" | "client_reported" | "unknown";
 export type TransactionType = "media_deposit" | "media_balance" | "media_refund" | "direct_expense" | "decoration_receipt" | "partner_payout" | "software_expense";
-export type PaymentMethod = "zelle" | "venmo" | "cash" | "bank_transfer" | "other";
+export type PaymentMethod = "zelle" | "venmo" | "cash" | "bank_transfer" | "other" | "square";
 
 export interface Inquiry {
   id: string;
@@ -44,6 +44,9 @@ export interface Transaction {
 export interface SpendEntry {
   id: string;
   date: string;
+  campaignId?: string;
+  coverageComplete?: boolean;
+  missingCampaignIds?: string[];
   amountCents: number;
   verifiedAt: string;
   notes: string;
@@ -51,9 +54,14 @@ export interface SpendEntry {
 
 export interface TrackerSettings {
   campaignId: string;
+  campaignIds?: string[];
+  activeCampaignId?: string;
+  campaigns?: { id: string; label: string; adSetId?: string }[];
+  adOptions?: { id: string; campaignId: string; label: string }[];
   adSetId?: string;
   videoAdId?: string;
   photoAdId?: string;
+  packageAdId?: string;
   budgetCents: number;
   start: string;
   end: string;
@@ -72,6 +80,7 @@ export interface TrackerData {
 
 export const WEBSITE_VIDEO_AD_ID = "120255494608960357";
 export const WEBSITE_PHOTO_AD_ID = "120255494734630357";
+export const WEBSITE_PACKAGE_AD_ID = "120255499730570357";
 export const STAGE_LABELS: Record<InquiryStage, string> = {
   new: "New inquiry", qualified: "Qualified", quoted: "Quote sent", booked: "Booked", completed: "Completed", lost: "Lost", cancelled: "Cancelled",
 };
@@ -106,20 +115,43 @@ export function reportingDates(settings: TrackerSettings): string[] {
 
 export function campaignAttribution(inquiry: Inquiry, settings: TrackerSettings): boolean {
   if (inquiry.isTest || inquiry.source === "unknown") return false;
-  if (inquiry.attribution?.campaign_id === settings.campaignId) return true;
+  if ((settings.campaignIds || [settings.campaignId]).includes(inquiry.attribution?.campaign_id || "")) return true;
   const ad = inquiry.sourceAdId || inquiry.attribution?.ad_id;
-  return inquiry.source === "client_reported" && [settings.videoAdId || WEBSITE_VIDEO_AD_ID, settings.photoAdId || WEBSITE_PHOTO_AD_ID].includes(ad || "");
+  return inquiry.source === "client_reported" && [...(settings.adOptions || []).map(item => item.id), settings.videoAdId || WEBSITE_VIDEO_AD_ID, settings.photoAdId || WEBSITE_PHOTO_AD_ID, settings.packageAdId || WEBSITE_PACKAGE_AD_ID].includes(ad || "");
 }
 
 export function sourceLabel(inquiry: Inquiry, settings: TrackerSettings): string {
   const ad = inquiry.sourceAdId || inquiry.attribution?.ad_id;
-  const name = ad === (settings.videoAdId || WEBSITE_VIDEO_AD_ID) ? "Video ad" : ad === (settings.photoAdId || WEBSITE_PHOTO_AD_ID) ? "Photo ad" : "Campaign";
+  const configuredName = settings.adOptions?.find(item => item.id === ad)?.label;
+  const name = configuredName || (ad === (settings.videoAdId || WEBSITE_VIDEO_AD_ID) ? "Video ad" : ad === (settings.photoAdId || WEBSITE_PHOTO_AD_ID) ? "Photo ad" : ad === (settings.packageAdId || WEBSITE_PACKAGE_AD_ID) ? "$1,250 package ad" : "Campaign");
   const sourceMatchesCampaign = campaignAttribution({ ...inquiry, isTest: false }, settings);
   if (inquiry.source === "captured_url" && sourceMatchesCampaign) return `${name} · URL captured`;
   if (inquiry.source === "client_reported" && sourceMatchesCampaign) return `${name} · client reported`;
   if (inquiry.source === "captured_url") return "Other URL source";
   if (inquiry.source === "client_reported") return "Other · client reported";
   return "Unknown / unassigned";
+}
+
+// Aggregate latest observations per campaign and day. Missing campaign rows are
+// never inferred as zero, even when the other campaign has a confirmed amount.
+export function aggregateCampaignSpend(rows: SpendEntry[], settings: TrackerSettings, now?: Date): SpendEntry[] {
+  const campaignIds = settings.campaignIds || [settings.campaignId];
+  const dates = reportingDates(settings);
+  const latest = new Map<string, SpendEntry>();
+  for (const row of rows) {
+    const campaignId = row.campaignId || settings.campaignId;
+    const observed = Date.parse(row.verifiedAt);
+    if (!campaignIds.includes(campaignId) || !dates.includes(row.date) || !Number.isSafeInteger(row.amountCents) || row.amountCents < 0 || row.amountCents > 100000000 || !Number.isFinite(observed) || (now && (observed > now.getTime() || row.date > localDate(now)))) continue;
+    const key = `${campaignId}:${row.date}`;
+    const prior = latest.get(key);
+    if (!prior || observed >= Date.parse(prior.verifiedAt)) latest.set(key, row);
+  }
+  return dates.flatMap(day => {
+    const values = campaignIds.map(id => latest.get(`${id}:${day}`)).filter((row): row is SpendEntry => !!row);
+    if (!values.length) return [];
+    const missingCampaignIds = campaignIds.filter(id => !latest.has(`${id}:${day}`));
+    return [{ id: `combined:${day}`, date: day, amountCents: values.reduce((sum, row) => sum + row.amountCents, 0), verifiedAt: new Date(Math.min(...values.map(row => Date.parse(row.verifiedAt)))).toISOString(), notes: values.map(row => row.notes).join(" | "), coverageComplete: missingCampaignIds.length === 0, missingCampaignIds }];
+  });
 }
 
 function uniqueById<T extends { id: string }>(rows: T[]): T[] {
@@ -176,15 +208,10 @@ export function calculateTrackerMetrics(data: TrackerData, now = new Date()) {
   const dates = reportingDates(data.settings);
   const today = localDate(now);
   const requiredDates = dates.filter(d => d <= today);
-  const spendByDate = new Map<string, SpendEntry>();
-  for (const row of data.spend) {
-    if (!dates.includes(row.date)) continue;
-    const prior = spendByDate.get(row.date);
-    if (!prior || row.verifiedAt >= prior.verifiedAt) spendByDate.set(row.date, row);
-  }
-  const spendRows = Array.from(spendByDate.values());
-  const actualSpendCents = spendRows.length ? spendRows.reduce((sum, row) => sum + safeCents(row.amountCents), 0) : null;
-  const missingSpendDates = requiredDates.filter(d => !spendByDate.has(d));
+  const spendRows = aggregateCampaignSpend(data.spend, data.settings, now);
+  const spendByDate = new Map(spendRows.map(row => [row.date, row]));
+  const actualSpendCents = spendRows.length ? spendRows.reduce((sum, row) => sum + row.amountCents, 0) : null;
+  const missingSpendDates = requiredDates.filter(day => !spendByDate.has(day) || !spendByDate.get(day)!.coverageComplete);
   const invalidMoneyRows = activeTransactionRows.filter(t => !Number.isSafeInteger(t.amountCents) || t.amountCents <= 0).length;
   const duplicateTransactionCount = activeTransactionRows.length - uniqueById(activeTransactionRows).length;
   const missingActualCosts = completed.filter(i => !i.actualCostsConfirmed);
@@ -224,8 +251,8 @@ export function calculateTrackerMetrics(data: TrackerData, now = new Date()) {
     missingQuotedBookingCount: booked.filter(i => i.quotedMediaCents == null).length,
     dates, requiredDates, missingSpendDates, spendRows,
     actualSpendCents, spendCoverageComplete: actualSpendCents !== null && missingSpendDates.length === 0,
-    remainingBudgetCents: actualSpendCents === null ? null : data.settings.budgetCents - actualSpendCents,
-    costPerPaidBookingCents: actualSpendCents !== null && depositBacked.length ? Math.round(actualSpendCents / depositBacked.length) : null,
+    remainingBudgetCents: actualSpendCents === null || missingSpendDates.length ? null : data.settings.budgetCents - actualSpendCents,
+    costPerPaidBookingCents: actualSpendCents !== null && !missingSpendDates.length && depositBacked.length ? Math.round(actualSpendCents / depositBacked.length) : null,
     cashAfterAdsAndDirectExpensesCents,
     completedContributionBeforeSoftwareCents, completedContributionAfterSoftwareCents,
     softwareShareConfirmed, allocatedSoftwareCents, fullBusinessSoftwarePlanningCents, softwareCashPaidCents,

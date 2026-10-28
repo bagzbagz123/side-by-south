@@ -92,3 +92,88 @@ export const inquiryAlerts = sqliteTable("inquiry_alerts", {
   claimExpiresAt: text("claim_expires_at"),
   reportedAt: text("reported_at"),
 });
+
+// Square credentials are encrypted with a key derived from the runtime app
+// secret. No plaintext access/refresh token or provider payload is persisted.
+export const squareConnections = sqliteTable("square_connections", {
+  key: text("key").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  merchantId: text("merchant_id").notNull(),
+  locationId: text("location_id").notNull(),
+  encryptedTokens: text("encrypted_tokens").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  refreshedAt: text("refreshed_at").notNull(),
+  scopesJson: text("scopes_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const squareOauthStates = sqliteTable("square_oauth_states", {
+  stateHash: text("state_hash").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  consumedAt: text("consumed_at"),
+});
+
+export const squareQuoteEnrollments = sqliteTable("square_quote_enrollments", {
+  inquiryId: text("inquiry_id").primaryKey().references(() => inquiries.id),
+  offerKey: text("offer_key").notNull(),
+  acceptedQuoteReference: text("accepted_quote_reference").notNull(),
+  digitalOnly: integer("digital_only", { mode: "boolean" }).notNull().default(false),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  actorId: text("actor_id").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const squareReceipts = sqliteTable("square_receipts", {
+  paymentId: text("payment_id").primaryKey(),
+  merchantId: text("merchant_id").notNull(),
+  orderId: text("order_id").notNull(),
+  providerUpdatedAt: text("provider_updated_at").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull(),
+  occurredOn: text("occurred_on").notNull(),
+  offerKey: text("offer_key"),
+  reference: text("reference"),
+  status: text("status").notNull().default("review"),
+  code: text("code").notNull(),
+  inquiryId: text("inquiry_id").references(() => inquiries.id),
+  ledgerTransactionId: text("ledger_transaction_id").references(() => ledgerTransactions.id),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const squareRefunds = sqliteTable("square_refunds", {
+  refundId: text("refund_id").primaryKey(),
+  paymentId: text("payment_id").notNull().references(() => squareReceipts.paymentId),
+  providerUpdatedAt: text("provider_updated_at").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  occurredOn: text("occurred_on").notNull(),
+  status: text("status").notNull().default("review"),
+  code: text("code").notNull(),
+  ledgerTransactionId: text("ledger_transaction_id").references(() => ledgerTransactions.id),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const squareSyncState = sqliteTable("square_sync_state", {
+  key: text("key").primaryKey(),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: text("lease_expires_at"),
+  watermark: text("watermark"),
+  scanBegin: text("scan_begin"),
+  scanUpper: text("scan_upper"),
+  scanPhase: text("scan_phase"),
+  cursor: text("cursor"),
+  pageIdsJson: text("page_ids_json"),
+  pageNextCursor: text("page_next_cursor"),
+  pageOffset: integer("page_offset").notNull().default(0),
+  scanPages: integer("scan_pages").notNull().default(0),
+  lastAttemptAt: text("last_attempt_at"),
+  lastSuccessAt: text("last_success_at"),
+  lastStatus: text("last_status").notNull().default("not_connected"),
+  lastCode: text("last_code"),
+  coverageGap: integer("coverage_gap", { mode: "boolean" }).notNull().default(false),
+  updatedAt: text("updated_at").notNull(),
+});

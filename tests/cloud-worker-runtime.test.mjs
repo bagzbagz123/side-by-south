@@ -24,7 +24,7 @@ test("real Workers runtime verifies fixed Meta responses and blocks redirects wi
       assert.equal(url.searchParams.has("access_token"), false);
       if (redirect) return new Response(null, { status: 302, headers: { location: "https://never-follow.example/credential-target" } });
       if (url.pathname === "/v26.0/act_2313142399498951") return Response.json({ id: "act_2313142399498951", account_id: "2313142399498951", currency: "USD", timezone_name: "America/New_York", account_status: 1 });
-      if (url.pathname === "/v26.0/120255494608980357") return Response.json({ id: "120255494608980357", account_id: "2313142399498951" });
+      if (["/v26.0/120255494608980357", "/v26.0/120255493267260357"].includes(url.pathname)) return Response.json({ id: url.pathname.split("/").at(-1), account_id: "2313142399498951" });
       throw new Error("Unexpected local fixture endpoint");
     },
   });
@@ -35,7 +35,7 @@ test("real Workers runtime verifies fixed Meta responses and blocks redirects wi
     await database.prepare(stateTable).run();
     const verified = await (await runtime.dispatchFetch("https://site.test/verify")).json();
     assert.equal(verified.status, "verified");
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.equal(calls.every(call => call.authorization === "Bearer local-runtime-fixture-not-a-real-credential"), true);
     redirect = true;
     const before = calls.length;

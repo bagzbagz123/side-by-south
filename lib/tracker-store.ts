@@ -2,14 +2,31 @@ import { env } from "cloudflare:workers";
 import { getCloudTrackingStatus } from "@/lib/cloud-tracking";
 
 export const CAMPAIGN_ID = "120255494608980357";
+export const DM_CAMPAIGN_ID = "120255493267260357";
+export const DM_VIDEO_AD_ID = "120255493267280357";
+export const DM_PHOTO_AD_ID = "120255493337370357";
+export const DM_PACKAGE_AD_ID = "120255515766120357";
 export const VIDEO_AD_ID = "120255494608960357";
 export const PHOTO_AD_ID = "120255494734630357";
+export const PACKAGE_AD_ID = "120255499730570357";
 export const BASE_SETTINGS = {
   campaignId: CAMPAIGN_ID,
+  activeCampaignId: DM_CAMPAIGN_ID,
+  campaignIds: [CAMPAIGN_ID, DM_CAMPAIGN_ID],
+  campaigns: [{ id: CAMPAIGN_ID, label: "Website · paused", adSetId: "120255494608970357" }, { id: DM_CAMPAIGN_ID, label: "Instagram DMs", adSetId: "120255493267270357" }],
+  adOptions: [
+    { id: VIDEO_AD_ID, campaignId: CAMPAIGN_ID, label: "Website · 15-second proposal video" },
+    { id: PHOTO_AD_ID, campaignId: CAMPAIGN_ID, label: "Website · proposal photo" },
+    { id: PACKAGE_AD_ID, campaignId: CAMPAIGN_ID, label: "Website · $1,250 package" },
+    { id: DM_VIDEO_AD_ID, campaignId: DM_CAMPAIGN_ID, label: "Instagram DM · 15-second proposal video" },
+    { id: DM_PHOTO_AD_ID, campaignId: DM_CAMPAIGN_ID, label: "Instagram DM · proposal photo" },
+    { id: DM_PACKAGE_AD_ID, campaignId: DM_CAMPAIGN_ID, label: "Instagram DM · $1,250 package" },
+  ],
   adSetId: "120255494608970357",
   videoAdId: VIDEO_AD_ID,
   photoAdId: PHOTO_AD_ID,
-  budgetCents: 35000,
+  packageAdId: PACKAGE_AD_ID,
+  budgetCents: 10000,
   start: "2026-10-25T08:10:00-04:00",
   end: "2026-11-01T07:10:00-05:00",
   timezone: "America/New_York",
@@ -21,9 +38,11 @@ const COVERAGE = ["photo", "film", "both", "unsure"];
 const STAGES = ["new", "qualified", "quoted", "booked", "completed", "lost", "cancelled"];
 const SOURCES = ["captured_url", "client_reported", "unknown"];
 const TYPES = ["media_deposit", "media_balance", "media_refund", "direct_expense", "decoration_receipt", "partner_payout", "software_expense"];
-const METHODS = ["zelle", "venmo", "cash", "bank_transfer", "other"];
+const METHODS = ["zelle", "venmo", "cash", "bank_transfer", "other", "square"];
 const ATTRIBUTION_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "campaign_id", "adset_id", "ad_id"];
-const KNOWN_ADS = new Set([VIDEO_AD_ID, PHOTO_AD_ID]);
+const KNOWN_ADS = new Set(BASE_SETTINGS.adOptions.map(ad => ad.id));
+const CAMPAIGN_IDS = BASE_SETTINGS.campaignIds;
+function campaignForAd(id: string | null) { return BASE_SETTINGS.adOptions.find(ad => ad.id === id)?.campaignId; }
 type JsonObject = Record<string, unknown>;
 type Row = Record<string, string | number | null>;
 
@@ -90,11 +109,11 @@ function attribution(value: unknown): Record<string, string> {
 function adId(value: unknown): string | null {
   if (value == null || value === "") return null;
   const result = text(value, "Ad ID", 40, true);
-  if (!KNOWN_ADS.has(result)) throw new TrackerError(400, "Choose one of this campaign's two ads.");
+  if (!KNOWN_ADS.has(result)) throw new TrackerError(400, "Choose one of this campaign's ads.");
   return result;
 }
 function capturedSource(attrs: Record<string, string>): boolean {
-  return attrs.campaign_id === CAMPAIGN_ID && KNOWN_ADS.has(attrs.ad_id);
+  return CAMPAIGN_IDS.includes(attrs.campaign_id) && campaignForAd(attrs.ad_id) === attrs.campaign_id;
 }
 
 export async function readJsonRequest(request: Request, maximumBytes = 16384): Promise<JsonObject> {
@@ -123,7 +142,7 @@ export async function readJsonRequest(request: Request, maximumBytes = 16384): P
 
 export function validateInquiry(raw: unknown, manual = false) {
   const input = object(raw);
-  onlyKeys(input, ["id", "submissionId", "name", "instagram", "eventDate", "flexibleDate", "eventLocation", "coverage", "notes", "attribution", "consent", "company", "source", "sourceAdId", "isTest", "alertTest"]);
+  onlyKeys(input, ["id", "submissionId", "name", "instagram", "eventDate", "flexibleDate", "eventLocation", "coverage", "notes", "attribution", "consent", "company", "source", "sourceAdId", "sourceCampaignId", "isTest", "alertTest"]);
   const isTest = input.isTest == null ? false : bool(input.isTest, "Test inquiry");
   const alertTest = input.alertTest == null ? false : bool(input.alertTest, "Alert test");
   if ("alertTest" in input && (!isTest || typeof input.alertTest !== "boolean")) throw new TrackerError(400, "Alert tests require a test inquiry and a true or false alert choice.");
@@ -141,9 +160,13 @@ export function validateInquiry(raw: unknown, manual = false) {
   if (manual) {
     source = input.source == null ? "unknown" : choice(input.source, ["client_reported", "unknown"], "Source");
     sourceAdId = adId(input.sourceAdId ?? attrs.ad_id);
-    if (source === "client_reported") { attrs.campaign_id = CAMPAIGN_ID; if (sourceAdId) attrs.ad_id = sourceAdId; }
+    if (source === "client_reported") {
+      const campaignId = input.sourceCampaignId == null ? campaignForAd(sourceAdId) || CAMPAIGN_ID : choice(input.sourceCampaignId, CAMPAIGN_IDS, "Campaign");
+      if (sourceAdId && campaignForAd(sourceAdId) !== campaignId) throw new TrackerError(400, "Choose an ad belonging to the selected campaign.");
+      attrs.campaign_id = campaignId; if (sourceAdId) attrs.ad_id = sourceAdId; else delete attrs.ad_id;
+    }
     else sourceAdId = null;
-  } else if (input.source != null || input.sourceAdId != null || input.id != null) {
+  } else if (input.source != null || input.sourceAdId != null || input.sourceCampaignId != null || input.id != null) {
     throw new TrackerError(400, "Please provide the public inquiry fields only.");
   }
   return {
@@ -212,7 +235,7 @@ export async function readTracker() {
     db().prepare("SELECT * FROM inquiries ORDER BY created_at DESC LIMIT 5000").all<Row>(),
     db().prepare("SELECT * FROM ledger_transactions ORDER BY occurred_on DESC, created_at DESC LIMIT 10000").all<Row>(),
     db().prepare("SELECT id, transaction_id, action, reason, created_at FROM transaction_audit ORDER BY created_at LIMIT 50000").all<Row>(),
-    db().prepare("SELECT * FROM ad_spend WHERE campaign_id = ? ORDER BY date LIMIT 100").bind(CAMPAIGN_ID).all<Row>(),
+    db().prepare("SELECT * FROM ad_spend WHERE campaign_id IN (?, ?) ORDER BY date, campaign_id LIMIT 100").bind(...CAMPAIGN_IDS).all<Row>(),
     readSettings(),
   ]);
   if (leads.results.length >= 5000 || ledger.results.length >= 10000 || audit.results.length >= 50000 || spent.results.length >= 100) throw new TrackerError(503, "This tracker has reached its record-view limit. Totals are hidden to avoid reporting incomplete financial results. The original records remain stored.");
@@ -223,12 +246,12 @@ export async function readTracker() {
     events.push({ id: String(row.id), action: String(row.action), reason: String(row.reason), createdAt: String(row.created_at) });
     auditByTransaction.set(key, events);
   }
-  return { inquiries: leads.results.map(mapInquiry), transactions: ledger.results.map(row => ({ id: String(row.id), inquiryId: row.inquiry_id, occurredOn: String(row.occurred_on), type: String(row.type), amountCents: Number(row.amount_cents), method: String(row.method), referenceNote: String(row.reference_note || ""), createdAt: String(row.created_at), voidedAt: row.voided_at, voidReason: row.void_reason, auditEvents: auditByTransaction.get(String(row.id)) || [] })), spend: spent.results.map(row => ({ id: String(row.id), date: String(row.date), amountCents: Number(row.amount_cents), verifiedAt: String(row.verified_at), notes: String(row.notes || "") })), settings, cloudStatus: await getCloudTrackingStatus() };
+  return { inquiries: leads.results.map(mapInquiry), transactions: ledger.results.map(row => ({ id: String(row.id), inquiryId: row.inquiry_id, occurredOn: String(row.occurred_on), type: String(row.type), amountCents: Number(row.amount_cents), method: String(row.method), referenceNote: String(row.reference_note || ""), createdAt: String(row.created_at), voidedAt: row.voided_at, voidReason: row.void_reason, auditEvents: auditByTransaction.get(String(row.id)) || [] })), spend: spent.results.map(row => ({ id: String(row.id), campaignId: String(row.campaign_id), date: String(row.date), amountCents: Number(row.amount_cents), verifiedAt: String(row.verified_at), notes: String(row.notes || "") })), settings, cloudStatus: await getCloudTrackingStatus() };
 }
 
 async function updateInquiry(raw: unknown) {
   const input = object(raw);
-  onlyKeys(input, ["id", "stage", "quotedMediaCents", "bookingDate", "completedDate", "source", "sourceAdId", "attribution", "notes", "actualCostsConfirmed", "decorationSettled", "isTest"]);
+  onlyKeys(input, ["id", "stage", "quotedMediaCents", "bookingDate", "completedDate", "source", "sourceAdId", "sourceCampaignId", "attribution", "notes", "actualCostsConfirmed", "decorationSettled", "isTest"]);
   const id = uuid(input.id, "Inquiry ID");
   const existing = await db().prepare("SELECT * FROM inquiries WHERE id = ?").bind(id).first<Row>();
   if (!existing) throw new TrackerError(404, "Inquiry not found.");
@@ -241,12 +264,16 @@ async function updateInquiry(raw: unknown) {
   if (input.completedDate !== undefined) set("completed_date", date(input.completedDate, "Completion date", true));
   if (input.notes !== undefined) set("notes", text(input.notes, "Notes", 2000));
   for (const [field, column] of [["actualCostsConfirmed", "actual_costs_confirmed"], ["decorationSettled", "decoration_settled"], ["isTest", "is_test"]]) if (input[field] !== undefined) set(column, bool(input[field], field) ? 1 : 0);
-  if (input.source !== undefined || input.sourceAdId !== undefined || input.attribution !== undefined) {
+  if (input.source !== undefined || input.sourceAdId !== undefined || input.sourceCampaignId !== undefined || input.attribution !== undefined) {
     const source = input.source === undefined ? String(existing.source) : choice(input.source, SOURCES, "Source");
     const attrs = input.attribution === undefined ? JSON.parse(String(existing.attribution_json)) : attribution(input.attribution);
     const sourceAdId = input.sourceAdId === undefined ? (existing.source_ad_id == null ? null : String(existing.source_ad_id)) : adId(input.sourceAdId);
     if (source === "captured_url" && !capturedSource(attrs)) throw new TrackerError(400, "Captured attribution requires this campaign's original ad URL data.");
-    if (source === "client_reported") { attrs.campaign_id = CAMPAIGN_ID; if (sourceAdId) attrs.ad_id = sourceAdId; else delete attrs.ad_id; }
+    if (source === "client_reported") {
+      const campaignId = input.sourceCampaignId == null ? campaignForAd(sourceAdId) || (CAMPAIGN_IDS.includes(attrs.campaign_id) ? attrs.campaign_id : CAMPAIGN_ID) : choice(input.sourceCampaignId, CAMPAIGN_IDS, "Campaign");
+      if (sourceAdId && campaignForAd(sourceAdId) !== campaignId) throw new TrackerError(400, "Choose an ad belonging to the selected campaign.");
+      attrs.campaign_id = campaignId; if (sourceAdId) attrs.ad_id = sourceAdId; else delete attrs.ad_id;
+    }
     set("source", source); set("source_ad_id", source === "unknown" ? null : sourceAdId); set("attribution_json", JSON.stringify(attrs));
   }
   if (!updates.length) throw new TrackerError(400, "No supported changes were provided.");
@@ -263,7 +290,9 @@ export function validateTransaction(raw: unknown) {
   if (type !== "software_expense" && !inquiryId) throw new TrackerError(400, "Select the inquiry this transaction belongs to.");
   const method = choice(input.method, METHODS, "Payment method");
   const referenceNote = text(input.referenceNote, "Payment reference", 240);
-  const referenceKey = inquiryId && ["media_deposit", "media_balance", "media_refund"].includes(type) && ["zelle", "venmo", "bank_transfer"].includes(method) && referenceNote ? `${inquiryId}|${method}|${referenceNote.toLowerCase().replace(/\s+/g, " ")}` : null;
+  const squareReference = method === "square" ? referenceNote.match(/^(?:Square )?([A-Za-z0-9_-]{1,200})$/)?.[1] : null;
+  if (method === "square" && !squareReference) throw new TrackerError(400, "Enter the exact Square payment or refund ID as its reference.");
+  const referenceKey = method === "square" ? `${type === "media_refund" ? "square-refund" : "square"}:MLHDWJZHXQRMK:${squareReference}` : inquiryId && ["media_deposit", "media_balance", "media_refund"].includes(type) && ["zelle", "venmo", "bank_transfer"].includes(method) && referenceNote ? `${inquiryId}|${method}|${referenceNote.toLowerCase().replace(/\s+/g, " ")}` : null;
   return { id: uuid(input.id, "Transaction ID"), inquiryId, occurredOn: date(input.occurredOn, "Payment date")!, type, amountCents: cents(input.amountCents, "Transaction amount"), method, referenceNote, referenceKey };
 }
 async function addTransaction(raw: unknown) {
@@ -315,15 +344,16 @@ async function changeTransactionState(raw: unknown, action: "void" | "restore", 
 }
 async function saveSpend(raw: unknown) {
   const input = object(raw);
-  onlyKeys(input, ["date", "amountCents", "verifiedAt", "notes"]);
+  onlyKeys(input, ["campaignId", "date", "amountCents", "verifiedAt", "notes"]);
+  const campaignId = input.campaignId == null ? CAMPAIGN_ID : choice(input.campaignId, CAMPAIGN_IDS, "Campaign");
   const day = date(input.date, "Spend date")!;
   if (day < "2026-10-25" || day > "2026-11-01") throw new TrackerError(400, "Choose a date within the campaign's reporting window.");
   const amount = cents(input.amountCents, "Actual ad spend", true);
   const verifiedAt = text(input.verifiedAt, "Verification time", 40, true);
   if (!Number.isFinite(Date.parse(verifiedAt))) throw new TrackerError(400, "Please provide a valid verification time.");
   const notes = text(input.notes, "Spend notes", 500);
-  const id = `${CAMPAIGN_ID}:${day}`;
-  await db().prepare("INSERT INTO ad_spend (id, campaign_id, date, amount_cents, verified_at, notes) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(campaign_id, date) DO UPDATE SET amount_cents = excluded.amount_cents, verified_at = excluded.verified_at, notes = excluded.notes").bind(id, CAMPAIGN_ID, day, amount, verifiedAt, notes).run();
+  const id = `${campaignId}:${day}`;
+  await db().prepare("INSERT INTO ad_spend (id, campaign_id, date, amount_cents, verified_at, notes) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(campaign_id, date) DO UPDATE SET amount_cents = excluded.amount_cents, verified_at = excluded.verified_at, notes = excluded.notes").bind(id, campaignId, day, amount, verifiedAt, notes).run();
   return { ok: true, id };
 }
 async function updateSettings(raw: unknown) {
