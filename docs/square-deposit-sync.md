@@ -25,7 +25,7 @@ OAuth tokens are encrypted at rest with AES-GCM and bound to the application, ap
 
 ## Pricing release safeguard
 
-Do not deploy the previously saved pricing-only version after this integration: it would remove the Square code. Merge the approved future price files into the integration and save a new future version without deploying it early. Reconcile the existing November 1 pricing-release task with that new version and current live-version guard; do not create a duplicate or silently overwrite a newer Site release.
+Do not deploy the previously saved pricing-only version after this integration: it would remove the Square code. Apply docs/future-pricing-after-campaign.patch to the integration (it changes only the four approved pricing files and adds the regular-price test), validate, and save a new future version without deploying it early. Reconcile the existing November 1 pricing-release task with that new version and current live-version guard; do not create a duplicate or silently overwrite a newer Site release.
 
 ## Verification boundary
 
